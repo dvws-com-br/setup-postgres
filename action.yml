@@ -1,0 +1,30 @@
+name: Setup Postgres
+description: Setup postgres and create database
+
+inputs:
+  host:
+    description: Database HOST
+    required: true
+  port:
+    description: Database PORT
+    required: false
+    default: "5432"
+  username:
+    description: Database username
+    required: true
+  password:
+    description: Database password
+    required: true
+  database-prefix:
+    description: Database prefix
+    required: false
+    default: test_
+  env-name:
+    description: Env name to export database var
+    required: false
+    default: DB_DATABASE
+
+runs:
+  using: node20
+  main: dist/main/index.js
+  post: dist/post/index.js

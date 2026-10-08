@@ -1,0 +1,67 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    name: Unit tests and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Verify bundle is up to date
+        run: |
+          npm run build
+          git diff --exit-code dist/ || { echo "dist/ is stale, run npm run build and commit"; exit 1; }
+
+  action:
+    name: Action smoke test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the action
+        id: setup-postgres
+        uses: ./
+        with:
+          host: 127.0.0.1
+          port: 5432
+          username: postgres
+          password: postgres
+          env-name: TEST_DB
+
+      - name: Verify the database exists
+        env:
+          TEST_DB: ${{ steps.setup-postgres.outputs.database }}
+        run: |
+          found=$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -tAc \
+            "SELECT 1 FROM pg_database WHERE datname = '$TEST_DB'")
+          test "$found" = "1"

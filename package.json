@@ -1,0 +1,23 @@
+{
+    "name": "setup-postgres",
+    "private": true,
+    "scripts": {
+        "build": "tsc && ncc build lib/main.js -o dist/main && ncc build lib/post.js -o dist/post",
+        "test": "vitest run",
+        "lint": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@actions/core": "^1.11.1",
+        "pg": "^8.16.3"
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
+        "@types/pg": "^8.23.1",
+        "@vercel/ncc": "0.45.0",
+        "typescript": "^5.9.3",
+        "vitest": "^3.2.7"
+    },
+    "allowScripts": {
+        "esbuild@0.28.2": true
+    }
+}
