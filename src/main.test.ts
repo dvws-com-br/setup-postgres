@@ -23,6 +23,21 @@ vi.mock('pg', () => mockPg);
 
 import { main, run } from './main';
 
+const DEFAULT_INPUTS: Record<string, string> = {
+    host: 'localhost',
+    port: '5432',
+    username: 'postgres',
+    password: 'secret',
+    'database-prefix': 'test_',
+    'env-name': 'DB_DATABASE',
+};
+
+function mockInputs(overrides: Record<string, string> = {}): void {
+    mockCore.getInput.mockImplementation(
+        (name) => overrides[name] ?? DEFAULT_INPUTS[name] ?? '',
+    );
+}
+
 describe('main', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -30,24 +45,7 @@ describe('main', () => {
         process.env.GITHUB_RUN_ID = '777';
         process.env.GITHUB_JOB = 'test';
 
-        mockCore.getInput.mockImplementation((name) => {
-            switch (name) {
-                case 'host':
-                    return 'localhost';
-                case 'port':
-                    return '5432';
-                case 'username':
-                    return 'postgres';
-                case 'password':
-                    return 'secret';
-                case 'database-prefix':
-                    return 'test_';
-                case 'env-name':
-                    return 'DB_DATABASE';
-                default:
-                    return '';
-            }
-        });
+        mockInputs();
 
         mockClient.connect.mockResolvedValue(undefined);
         mockClient.query.mockResolvedValue({ rows: [] });
@@ -98,5 +96,59 @@ describe('main', () => {
             expect.objectContaining({ message: 'connection failed' }),
         );
         expect(mockClient.end).toHaveBeenCalled();
+    });
+
+    it('fails fast with a helpful message when required inputs are empty', async () => {
+        mockInputs({ host: '', port: '', username: '', password: '' });
+
+        main();
+        await vi.waitFor(() => expect(mockCore.setFailed).toHaveBeenCalled());
+
+        const [err] = mockCore.setFailed.mock.calls[0] as [Error];
+        expect(err.message).toContain("Required inputs 'host', 'username', 'password' are empty");
+        expect(err.message).toContain('secrets are not available to every workflow run');
+        expect(mockPg.Client).not.toHaveBeenCalled();
+        expect(mockClient.connect).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the default port when the port input is empty', async () => {
+        mockInputs({ port: '' });
+
+        await run();
+
+        expect(mockPg.Client).toHaveBeenCalledWith(
+            expect.objectContaining({ port: 5432 }),
+        );
+        expect(mockClient.connect).toHaveBeenCalled();
+    });
+
+    it('fails fast when the port input is not a valid port', async () => {
+        mockInputs({ port: 'not-a-port' });
+
+        main();
+        await vi.waitFor(() => expect(mockCore.setFailed).toHaveBeenCalled());
+
+        const [err] = mockCore.setFailed.mock.calls[0] as [Error];
+        expect(err.message).toContain("Input 'port' must be an integer between 1 and 65535");
+        expect(mockPg.Client).not.toHaveBeenCalled();
+    });
+
+    it('reports the target and unwrapped causes when the connection fails', async () => {
+        mockClient.connect.mockRejectedValueOnce(
+            new AggregateError(
+                [new Error('getaddrinfo ENOTFOUND localhost')],
+                '',
+            ),
+        );
+
+        main();
+        await vi.waitFor(() => expect(mockCore.setFailed).toHaveBeenCalled());
+
+        const [err] = mockCore.setFailed.mock.calls[0] as [Error];
+        expect(err.message).toBe(
+            'Failed to connect to Postgres at localhost:5432: ' +
+            'AggregateError: getaddrinfo ENOTFOUND localhost',
+        );
+        expect(mockClient.end).not.toHaveBeenCalled();
     });
 });

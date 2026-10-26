@@ -51,6 +51,58 @@ async function cleanupDatabases(client, pattern) {
 
 /***/ }),
 
+/***/ 2357:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.toActionError = toActionError;
+/**
+ * Normalizes any thrown value into an Error suitable for `core.setFailed`.
+ *
+ * Node rejects failed DNS lookups / multi-address connection attempts with an
+ * `AggregateError` whose own message is often an empty string, which GitHub
+ * Actions renders as a bare "AggregateError" with no diagnostics. This helper
+ * unwraps the underlying causes so the real errors become visible.
+ */
+function toActionError(err) {
+    if (err instanceof AggregateError) {
+        const causes = err.errors
+            .map((cause) => describe(cause))
+            .filter((message) => message !== '');
+        const headline = err.message || err.name;
+        const message = causes.length > 0 ? `${headline}: ${causes.join('; ')}` : headline;
+        const error = new Error(message);
+        error.stack = err.stack ? `${message}\n${err.stack}` : message;
+        return error;
+    }
+    if (err instanceof Error) {
+        return err;
+    }
+    return new Error(describe(err));
+}
+function describe(err) {
+    if (err instanceof AggregateError) {
+        return toActionError(err).message;
+    }
+    if (err instanceof Error) {
+        return err.message || err.name;
+    }
+    if (typeof err === 'object' && err !== null) {
+        try {
+            return JSON.stringify(err) ?? String(err);
+        }
+        catch {
+            return String(err);
+        }
+    }
+    return String(err);
+}
+
+
+/***/ }),
+
 /***/ 5915:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -96,13 +148,17 @@ const core = __importStar(__nccwpck_require__(7484));
 const crypto_1 = __nccwpck_require__(6982);
 const pg_1 = __nccwpck_require__(3273);
 const db_1 = __nccwpck_require__(8348);
+const errors_1 = __nccwpck_require__(2357);
+const REQUIRED_INPUTS = ['host', 'username', 'password'];
+const DEFAULT_PORT = 5432;
 async function run() {
     const host = core.getInput('host');
-    const port = Number(core.getInput('port'));
+    const port = parsePort(core.getInput('port'));
     const user = core.getInput('username');
     const password = core.getInput('password');
     const prefix = core.getInput('database-prefix');
     const envName = core.getInput('env-name');
+    assertRequiredInputs({ host, username: user, password });
     const suffix = (0, crypto_1.randomBytes)(3).toString('hex');
     const dbName = `${prefix}${process.env.GITHUB_RUN_ID}_${process.env.GITHUB_JOB}_${suffix}`;
     const client = new pg_1.Client({
@@ -112,7 +168,7 @@ async function run() {
         password,
         database: 'postgres',
     });
-    await client.connect();
+    await connect(client, host, port);
     try {
         await (0, db_1.createDatabase)(client, dbName);
     }
@@ -131,9 +187,48 @@ async function run() {
     core.saveState('password', password);
     console.log(`Database created: ${dbName}`);
 }
+/**
+ * An empty secret still counts as a *supplied* input, so GitHub's
+ * `required: true` validation does not catch it. Empty connection values then
+ * surface as opaque failures (e.g. a bare `AggregateError` from resolving an
+ * empty host), so fail fast with an actionable message instead.
+ */
+function assertRequiredInputs(inputs) {
+    const missing = REQUIRED_INPUTS.filter((name) => !inputs[name]);
+    if (missing.length === 0) {
+        return;
+    }
+    const quoted = missing.map((name) => `'${name}'`).join(', ');
+    const plural = missing.length > 1;
+    throw new Error(`Required input${plural ? 's' : ''} ${quoted} ${plural ? 'are' : 'is'} ` +
+        'empty. If these values come from secrets, note that secrets are not ' +
+        'available to every workflow run — Dependabot pull requests and ' +
+        'unapproved fork pull requests do not receive repository secrets.');
+}
+/** Falls back to the default port when the input is empty (e.g. an unset secret). */
+function parsePort(value) {
+    if (value === '') {
+        return DEFAULT_PORT;
+    }
+    const port = Number(value);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new Error(`Input 'port' must be an integer between 1 and 65535, received '${value}'.`);
+    }
+    return port;
+}
+/** Reports connection failures with the target and the underlying causes. */
+async function connect(client, host, port) {
+    try {
+        await client.connect();
+    }
+    catch (err) {
+        throw new Error(`Failed to connect to Postgres at ${host}:${port}: ` +
+            `${(0, errors_1.toActionError)(err).message}`);
+    }
+}
 function main() {
     run().catch((err) => {
-        core.setFailed(err instanceof Error ? err : new Error(String(err)));
+        core.setFailed((0, errors_1.toActionError)(err));
     });
 }
 if ( true && require.main === require.cache[eval('__filename')]) {
