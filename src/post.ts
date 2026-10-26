@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 import { Client } from 'pg';
 import { cleanupDatabases } from './db';
+import { toActionError } from './errors';
 
 export async function run(): Promise<void> {
     const prefix = core.getState('database_prefix');
@@ -10,15 +11,24 @@ export async function run(): Promise<void> {
         return;
     }
 
+    const host = core.getState('host');
+    const port = Number(core.getState('port'));
     const client = new Client({
-        host: core.getState('host'),
-        port: Number(core.getState('port')),
+        host,
+        port,
         user: core.getState('user'),
         password: core.getState('password'),
         database: 'postgres',
     });
 
-    await client.connect();
+    try {
+        await client.connect();
+    } catch (err) {
+        throw new Error(
+            `Failed to connect to Postgres at ${host}:${port}: ` +
+            `${toActionError(err).message}`,
+        );
+    }
 
     try {
         const removed = await cleanupDatabases(
@@ -38,7 +48,7 @@ export async function run(): Promise<void> {
 
 export function main(): void {
     run().catch((err) => {
-        core.warning(err instanceof Error ? err.message : String(err));
+        core.warning(toActionError(err).message);
     });
 }
 

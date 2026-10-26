@@ -51,6 +51,58 @@ async function cleanupDatabases(client, pattern) {
 
 /***/ }),
 
+/***/ 2357:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.toActionError = toActionError;
+/**
+ * Normalizes any thrown value into an Error suitable for `core.setFailed`.
+ *
+ * Node rejects failed DNS lookups / multi-address connection attempts with an
+ * `AggregateError` whose own message is often an empty string, which GitHub
+ * Actions renders as a bare "AggregateError" with no diagnostics. This helper
+ * unwraps the underlying causes so the real errors become visible.
+ */
+function toActionError(err) {
+    if (err instanceof AggregateError) {
+        const causes = err.errors
+            .map((cause) => describe(cause))
+            .filter((message) => message !== '');
+        const headline = err.message || err.name;
+        const message = causes.length > 0 ? `${headline}: ${causes.join('; ')}` : headline;
+        const error = new Error(message);
+        error.stack = err.stack ? `${message}\n${err.stack}` : message;
+        return error;
+    }
+    if (err instanceof Error) {
+        return err;
+    }
+    return new Error(describe(err));
+}
+function describe(err) {
+    if (err instanceof AggregateError) {
+        return toActionError(err).message;
+    }
+    if (err instanceof Error) {
+        return err.message || err.name;
+    }
+    if (typeof err === 'object' && err !== null) {
+        try {
+            return JSON.stringify(err) ?? String(err);
+        }
+        catch {
+            return String(err);
+        }
+    }
+    return String(err);
+}
+
+
+/***/ }),
+
 /***/ 5960:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -95,20 +147,29 @@ exports.main = main;
 const core = __importStar(__nccwpck_require__(7484));
 const pg_1 = __nccwpck_require__(3273);
 const db_1 = __nccwpck_require__(8348);
+const errors_1 = __nccwpck_require__(2357);
 async function run() {
     const prefix = core.getState('database_prefix');
     const runId = core.getState('run_id');
     if (!prefix || !runId) {
         return;
     }
+    const host = core.getState('host');
+    const port = Number(core.getState('port'));
     const client = new pg_1.Client({
-        host: core.getState('host'),
-        port: Number(core.getState('port')),
+        host,
+        port,
         user: core.getState('user'),
         password: core.getState('password'),
         database: 'postgres',
     });
-    await client.connect();
+    try {
+        await client.connect();
+    }
+    catch (err) {
+        throw new Error(`Failed to connect to Postgres at ${host}:${port}: ` +
+            `${(0, errors_1.toActionError)(err).message}`);
+    }
     try {
         const removed = await (0, db_1.cleanupDatabases)(client, `${prefix}${runId}_%`);
         for (const dbName of removed) {
@@ -122,7 +183,7 @@ async function run() {
 }
 function main() {
     run().catch((err) => {
-        core.warning(err instanceof Error ? err.message : String(err));
+        core.warning((0, errors_1.toActionError)(err).message);
     });
 }
 if ( true && require.main === require.cache[eval('__filename')]) {

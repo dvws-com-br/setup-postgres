@@ -116,4 +116,22 @@ describe('post', () => {
         expect(mockCore.warning).toHaveBeenCalledWith('query failed');
         expect(mockClient.end).toHaveBeenCalled();
     });
+
+    it('warns with the target and unwrapped causes when the connection fails', async () => {
+        mockClient.connect.mockRejectedValueOnce(
+            new AggregateError(
+                [new Error('connect ECONNREFUSED 127.0.0.1:5432')],
+                '',
+            ),
+        );
+
+        main();
+        await vi.waitFor(() => expect(mockCore.warning).toHaveBeenCalled());
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+            'Failed to connect to Postgres at localhost:5432: ' +
+            'AggregateError: connect ECONNREFUSED 127.0.0.1:5432',
+        );
+        expect(mockClient.end).not.toHaveBeenCalled();
+    });
 });
